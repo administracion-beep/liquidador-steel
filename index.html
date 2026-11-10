@@ -419,6 +419,7 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
     <button class="tab" data-tab="preliq"><span class="num">2</span> Preliquidación</button>
     <button class="tab" data-tab="recibos"><span class="num">3</span> Recibos</button>
     <button class="tab" data-tab="cierre"><span class="num">4</span> Revisión y cierre</button>
+    <button class="tab" data-tab="sac">🎁 SAC</button>
     <button class="tab" data-tab="lsd"><span class="num">5</span> F.931</button>
     <button class="tab" data-tab="boletas"><span class="num">6</span> Boletas</button>
     <button class="tab" data-tab="archivo"><span class="num">7</span> Archivo</button>
@@ -457,6 +458,7 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
       <button class="mod" data-go="preliq"><span class="paso">2</span><h3>Preliquidación</h3><p>Revisá todos los recibos en una planilla antes de emitirlos.</p><div class="dato" id="datoPreliq">—</div></button>
       <button class="mod" data-go="recibos"><span class="paso">3</span><h3>Recibos</h3><p>Generá los recibos, cerrá el mes y descargá los PDF.</p><div class="dato" id="datoRecibos">—</div></button>
       <button class="mod" data-go="cierre"><span class="paso">4</span><h3>Revisión y cierre</h3><p>Errores que bloquean, advertencias, totales y cierre con fotografía.</p><div class="dato" id="datoCierre">—</div></button>
+      <button class="mod" data-go="sac"><span class="paso">🎁</span><h3>SAC</h3><p>Aguinaldo de junio y diciembre, con recibos aparte. Se calcula después de cerrar el mes.</p><div class="dato" id="datoSac">—</div></button>
       <button class="mod" data-go="lsd"><span class="paso">5</span><h3>F.931</h3><p>Archivo TXT para subir a ARCA y el F.931 estimado con las mismas bases.</p><div class="dato" id="dato931">—</div></button>
       <button class="mod" data-go="boletas"><span class="paso">6</span><h3>Boletas</h3><p>FAECYS, CEC, OSECAC e INACAP del mes.</p><div class="dato" id="datoBoletas">—</div></button>
       <button class="mod" data-go="archivo"><span class="paso">7</span><h3>Archivo</h3><p>Todas las liquidaciones: meses cerrados por el sistema y recibos reales anteriores.</p><div class="dato" id="datoArchivo">—</div></button>
@@ -586,6 +588,14 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
     <div id="f931TabVis" style="display:none">
       <div id="f931Container"></div>
     </div>
+  </div>
+
+  <div id="view-sac" style="display:none">
+    <div class="section-head">
+      <div><h2 id="sacTitulo">SAC (aguinaldo)</h2><p>Se liquida en junio y diciembre, en recibos aparte del sueldo. Se calcula después de cerrar el mes, con ese sueldo incluido en la mejor remuneración.</p></div>
+      <div class="actions"><button class="btn primary" id="btnSacPdf">⬇ Recibos de SAC (PDF)</button></div>
+    </div>
+    <div id="sacCont"></div>
   </div>
 
   <div id="view-boletas" style="display:none">
@@ -1093,7 +1103,7 @@ const Motor = (() => {
     // desde el ingreso (o el 1° del semestre) hasta la baja (o el fin del mes). Sobre las sumas no remunerativas del acuerdo
     // (suma, antigüedad y presentismo) se calcula igual, salvo que Parámetros indique lo contrario (sacSobreNoRem:false).
     const esMesSac = mesNum===6 || mesNum===12;
-    const sacAplica = P.sac !== false && !pasantia && esMesSac;   // solo junio y diciembre (criterio 11/2026); el proporcional de la baja va en la liquidación final
+    const sacAplica = P.sac !== false && !pasantia && esMesSac && entrada.conSac === true;   // el recibo del mes NUNCA lleva SAC: va en su propio recibo (vista SAC)   // solo junio y diciembre (criterio 11/2026); el proporcional de la baja va en la liquidación final
     let sacRem = 0, sacNoRem = 0, sacInfo = null;
     if(sacAplica){
       const hist = (entrada.sac && entrada.sac.meses) || [];
@@ -2668,7 +2678,7 @@ function entradaMotor(emp, nov, key, opt){
   return {retGanancias: gan ? gan.retencion : 0, ganInfo: gan, emp, nov, periodo:key, params:PARAMS, feriadosMes: feriadosDelMes(+key.slice(0,4), +key.slice(5)), pl: paramsLab(key),
           noRem: noRemDelMes(key),
           f931: conBaseArtPas(Object.assign({alicuota:18, detArt22:7003.68}, (PARAMS.f931 || {})[key] || {}), key),
-          sac: sacEntrada(emp, key), escala: escalaVigente(key), inacap: inacapDelPeriodo(key)};
+          sac: null, escala: escalaVigente(key), inacap: inacapDelPeriodo(key)};
 }
 // ===================== Ganancias 4ª categoría (régimen de retención, RG 4003) =====================
 // Retención del mes = impuesto sobre la ganancia neta ACUMULADA del año (enero → mes) − lo ya retenido.
@@ -2760,11 +2770,27 @@ const Ganancias = (() => {
         meses.push({periodo:p, bruto:b.bruto, aportes:b.aportes, fuente:b.fuente, retencion:ret});
         if(p === key) info = Object.assign({retencion:ret, meses}, calc || {});
         retenido += ret;
+        // el SAC de junio (recibo aparte, después del sueldo) suma a lo acumulado de los meses siguientes
+        if(p !== key && p >= INICIO_SISTEMA && /-(06|12)$/.test(p) && typeof reciboSacDe === 'function'){
+          const sc = reciboSacDe(emp, p);
+          if(sc){ bruto += sc.sueldoBrutoTotal; aportes += aportesDe(sc); retenido += Number(sc.retencionGanancias)||0; }
+        }
       }
       return info;
     });
   }
-  return {retencion, limpiar, tieneTablas, DED, ESC};
+  // Retención del recibo de SAC: impuesto sobre lo acumulado + el SAC, menos lo retenido (incluido el sueldo del mes)
+  function retencionSac(emp, key, sac){
+    const r = retencion(emp, key); if(!r || r.neta == null || !sac) return null;
+    const sb = Number(sac.sueldoBrutoTotal)||0, sa = aportesDe(sac);
+    const bruto = r.bruto + sb, aportes = r.aportes + sa;
+    const neta = bruto - aportes - r.generales, imponible = Math.max(0, neta - r.personales), imp = impuesto(key, imponible);
+    const retenido = r.retenidoAnt + (Number(r.retencion)||0);
+    let x = imp - retenido; const tope = sb * TOPE_MES, topeado = x > tope;
+    x = Math.max(-retenido, Math.min(x, tope));
+    return {retencion:r2(x), bruto:r2(bruto), aportes:r2(aportes), generales:r.generales, personales:r.personales, neta:r2(neta), imponible:r2(imponible), impuesto:r2(imp), retenidoAnt:r2(retenido), topeado};
+  }
+  return {retencion, retencionSac, limpiar, tieneTablas, DED, ESC};
 })();
 // INACAP por persona: 0,5% del básico Maestranza A del mes (tabla de INACAP). Un valor cargado en Parámetros para el mes manda.
 const INACAP_TABLA = {'2026-09':5919.51, '2026-10':6043.37, '2026-11':6167.24, '2026-12':6391.11};
@@ -2944,6 +2970,7 @@ function onPeriodChange(){
     renderBoletasView();
   }
   if(document.getElementById('view-cierre').style.display !== 'none') renderCierreView();
+  if(document.getElementById('view-sac') && document.getElementById('view-sac').style.display !== 'none') renderSacView();
   if(document.getElementById('view-lsd').style.display !== 'none') renderLsdView();
   if(document.getElementById('view-param').style.display !== 'none') renderParametros(true);
   updateCierrePill();
@@ -2952,7 +2979,7 @@ selMes.addEventListener('change', onPeriodChange);
 selAnio.addEventListener('change', onPeriodChange);
 
 // ---- Tabs ----
-const ALL_VIEWS = ['view-inicio','view-param','view-novedades','view-recibos','view-preliq','view-cierre','view-f931','view-boletas','view-archivo','view-lsd','view-placeholder'];
+const ALL_VIEWS = ['view-sac','view-inicio','view-param','view-novedades','view-recibos','view-preliq','view-cierre','view-f931','view-boletas','view-archivo','view-lsd','view-placeholder'];
 function showView(id){
   ALL_VIEWS.forEach(v=>{ document.getElementById(v).style.display = (v===id) ? 'block' : 'none'; });
 }
@@ -2971,6 +2998,7 @@ document.querySelectorAll('.tab').forEach(tab=>{
     else if(tabName==='lsd'){ showView('view-lsd'); renderLsdView(); }
     else if(tabName==='archivo'){ showView('view-archivo'); renderArchivoView(); }
     else if(tabName==='cierre'){ showView('view-cierre'); renderCierreView(); }
+    else if(tabName==='sac'){ showView('view-sac'); renderSacView(); }
     else if(tabName==='param'){ showView('view-param'); renderParametros(); }
     else showView('view-placeholder');
     window.scrollTo(0,0);
@@ -3114,6 +3142,7 @@ function renderInicio(){
     const n = EMPLOYEES.filter(e=>e.activo!==false && enPrueba(e)).length;
     return `Licencias /${PARAMS.divisorLicencia} · prueba ${PARAMS.mesesPrueba} meses <span class="dim">· ${n} ${n===1?'persona':'personas'} a prueba${PARAMS_DB===false?' · sin guardar':''}</span>`;
   });
+  seguro('datoSac', ()=>{ const [y,mm] = key.split('-').map(Number); const sk = y+'-'+(mm<=6?'06':'12'); return `${mm<=6?'1°':'2°'} semestre ${y} <span class="dim">· ${periodoCerrado(sk) ? 'listo para liquidar' : 'se calcula al cerrar '+(mm<=6?'junio':'diciembre')}</span>`; });
   seguro('datoCierre', ()=> cerrado ? '🔒 cerrado' + (SNAPSHOTS[key] ? ' · con fotografía' : '') : (ReglasEstado.esSimulacion(PARAMS, key) ? '◐ simulación: reglas sin validar' : '○ listo para revisar'));
   seguro('datoArchivo', ()=>{
     const n = Object.values(CIERRES).filter(x=>x && x.cerrado).length;
@@ -3753,6 +3782,43 @@ function partirSac(c){
     const sac = armar(L_sac, baseSac, {esReciboSac:true, licencias:[], llamadosAtencion:[], hsAnuladasMJ:0});
     return [sue, sac];
   }catch(e){ console.warn('partirSac', e); return [c]; }
+}
+// ===================== Recibos de SAC (aparte del sueldo) =====================
+// El SAC de junio / diciembre se calcula DESPUÉS del recibo del mes (con ese sueldo incluido en la mejor remuneración).
+// Recibo completo (sueldo + SAC) → solo para el Libro de Sueldos, el F.931 y las boletas del mes. Lo que ve la gente: sueldo por un lado, SAC por otro.
+const SacCache = new Map(); let sacCacheT = null;
+function sacMemo(k, f){ if(SacCache.has(k)) return SacCache.get(k); const v = f(); SacCache.set(k, v); if(!sacCacheT) sacCacheT = setTimeout(()=>{ SacCache.clear(); sacCacheT = null; }, 0); return v; }
+const esMesSac = key => /-(06|12)$/.test(key||'');
+function sacManualDe(key, leg){ return ((PARAMS.sacManual||{})[key]||{})[leg] || null; }
+function sacNov(emp, nov, key){
+  const m = sacManualDe(key, emp.legajo); const o = Object.assign({}, nov); delete o.sacManual; delete o.sacNoRemManual;
+  if(m && m.rem!=null) o.sacManual = m.rem; else if(nov.sacManual!=null) o.sacManual = nov.sacManual;
+  if(m && m.norem!=null) o.sacNoRemManual = m.norem; else if(nov.sacNoRemManual!=null) o.sacNoRemManual = nov.sacNoRemManual;
+  return o;
+}
+function reciboFullDe(emp, key){
+  if(!esMesSac(key) || PARAMS.sac === false) return null;
+  return sacMemo('f|'+emp.legajo+'|'+key, ()=>{
+    const nov = (STATE[key]||{})[emp.legajo]; if(!nov) return null;
+    const ent = entradaMotor(emp, sacNov(emp, nov, key), key); ent.conSac = true; ent.sac = sacEntrada(emp, key);
+    let full = Motor.redondear(Motor.calcularRecibo(ent), ent.params);
+    if(!(full.sacRem || full.sacNoRem)) return null;
+    const p0 = partirSac(full); const g = p0.length > 1 ? Ganancias.retencionSac(emp, key, p0[1]) : null;   // Ganancias del SAC: sobre lo acumulado + el SAC
+    if(g && g.retencion){ ent.retGanancias = (Number(ent.retGanancias)||0) + g.retencion; full = Motor.redondear(Motor.calcularRecibo(ent), ent.params); }
+    full.ganSacInfo = g || null;
+    return full;
+  });
+}
+function reciboSacDe(emp, key){
+  if(!esMesSac(key)) return null;
+  return sacMemo('s|'+emp.legajo+'|'+key, ()=>{ const f = reciboFullDe(emp, key); if(!f) return null; const p = partirSac(f); return p.length > 1 ? p[1] : null; });
+}
+function calcsSac(key){ return empleadosDelPeriodo(key).map(e=>reciboSacDe(e, key)).filter(Boolean); }
+// Para el Libro de Sueldos, el F.931 y las boletas: en junio y diciembre, sueldo + SAC juntos
+function calcsConSac(key){
+  key = key || currentKey();
+  if(!esMesSac(key) || PARAMS.sac === false) return calcsDelPeriodo(key);
+  return empleadosDelPeriodo(key).map(e=>reciboFullDe(e, key) || reciboDe(e, key)).filter(Boolean);
 }
 // Prueba de menor a mayor compactación en un PDF descartable y dibuja con la primera que entra en una hoja
 function dibujarReciboPDF(doc, c){
@@ -4516,7 +4582,7 @@ function anyDirty(){ return cola.hayPendientes(); }
 function scheduleSave(){ /* compatibilidad: la cola programa sola */ }
 const RECHAZADOS = [];   // cambios que la app no pudo mandar a la base (permiso, solo lectura, período cerrado…)
 function marcarEnCola(tipo, id){
-  Ganancias.limpiar();
+  Ganancias.limpiar(); SacCache.clear();
   const r = cola.marcar(tipo, id);
   if(!r.ok){ RECHAZADOS.push({que: nombreEntidad({tipo, id:String(id)}), motivo: r.motivo, at: new Date()}); showToast('No se guardó: ' + r.motivo); pintarGuardado(); return false; }
   return true;
@@ -4985,6 +5051,7 @@ async function reabrirMes(key){
   delete SNAPSHOTS[key];
   updateCierrePill(); onPeriodChange();
   if(document.getElementById('view-cierre').style.display !== 'none') renderCierreView();
+  if(document.getElementById('view-sac') && document.getElementById('view-sac').style.display !== 'none') renderSacView();
   showToast(`${labelPeriodo(key)} reabierto (motivo registrado)`);
 }
 document.getElementById('btnCerrarMes').addEventListener('click', ()=> irA('cierre'));
@@ -5640,9 +5707,9 @@ function guardarP931(){
     guardarParametros();
   }, 800);
 }
-function calcular931(){ const key = currentKey(); cargarP931(key); return Object.assign({key}, Motor.calcular931(calcsDelPeriodo(key), p931Actual(), paramsLab(key))); }
-function calcular931Planilla(){ const key = currentKey(); cargarP931(key); return Object.assign({key}, Motor.calcular931Planilla(calcsDelPeriodo(key), p931Actual(), paramsLab(key), (PARAMS.lsd||{}).perfiles||{})); }
-function calcularBoletas(){ const key = currentKey(); return Object.assign({key}, Motor.boletas(calcsDelPeriodo(key))); }
+function calcular931(){ const key = currentKey(); cargarP931(key); return Object.assign({key}, Motor.calcular931(calcsConSac(key), p931Actual(), paramsLab(key))); }
+function calcular931Planilla(){ const key = currentKey(); cargarP931(key); return Object.assign({key}, Motor.calcular931Planilla(calcsConSac(key), p931Actual(), paramsLab(key), (PARAMS.lsd||{}).perfiles||{})); }
+function calcularBoletas(){ const key = currentKey(); return Object.assign({key}, Motor.boletas(calcsConSac(key))); }
 
 // ---------------- Parámetros: reglas, validación y excepciones ----------------
 function renderParamExtra(){
@@ -5935,8 +6002,9 @@ function renderLsdView(){
   const imp = (PARAMS.lsd||{}).importado;
   const impTxt = imp ? `Perfiles importados de <b>${esc(imp.archivo||'TXT de ARCA')}</b> (${Object.keys(perfiles).length} CUIL) · ${esc(imp.por||'')} · ${imp.at ? new Date(imp.at).toLocaleDateString('es-AR') : ''}` : '';
   av.innerHTML = avisos.map(t=>`<div class="foot-note" style="margin-bottom:8px;">${t}</div>`).join('');
-  const calcs = calcsDelPeriodo(key);
+  const calcs = calcsConSac(key);   // junio y diciembre: sueldo + SAC en la misma liquidación del Libro
   if(!calcs.length){ res.innerHTML=''; cont.innerHTML = '<div class="foot-note">No hay recibos en este período.</div>'; return; }
+  if(esMesSac(key) && PARAMS.sac !== false) av.innerHTML += `<div class="foot-note" style="margin-bottom:8px;">El archivo de ${esc(labelPeriodo(key))} incluye el <b>SAC</b> junto con el sueldo. Bajalo después de cerrar el mes y revisar el SAC.</div>`;
   let r;
   try{ r = LSD.armar(calcs, lsdOpciones(key)); }
   catch(e){ cont.innerHTML = '<div class="foot-note" style="color:var(--red)">No se pudo armar el archivo: '+esc(e.message||e)+'</div>'; return; }
@@ -6097,47 +6165,62 @@ function abrirGanancias(){
 }
 
 // ===================== SAC: control y corrección =====================
-document.getElementById('btnPreliqSac').addEventListener('click', ()=>{
-  const key = currentKey(); const [a, m] = key.split('-');
-  const calcs = calcsDelPeriodo(key).filter(c=>c.sacInfo);
-  if(PARAMS.sac === false){ showToast('El SAC está desactivado en Parámetros'); return; }
-  if(!calcs.length){ abrirDialogo('SAC · '+labelPeriodo(key), `<p style="font-size:12.5px;">En ${labelPeriodo(key)} no corresponde SAC: se liquida solo en <b>junio</b> y <b>diciembre</b>, en un recibo aparte que se calcula con el sueldo de ese mes ya incluido. Cambiá el mes arriba para verlo.</p>`); return; }
+document.getElementById('btnPreliqSac').addEventListener('click', ()=>{ document.querySelector('[data-tab="sac"]').click(); });
+
+// ===================== Vista SAC =====================
+function sacSemestreKey(){ const [y,m] = currentKey().split('-').map(Number); return y + '-' + (m<=6 ? '06' : '12'); }
+function renderSacView(){
+  const cont = document.getElementById('sacCont'); const sk = sacSemestreKey(); const [y, m] = sk.split('-');
+  const sem = (m==='06' ? '1°' : '2°') + ' semestre ' + y, mesTxt = m==='06' ? 'junio' : 'diciembre';
+  document.getElementById('sacTitulo').textContent = 'SAC · ' + sem;
+  if(PARAMS.sac === false){ cont.innerHTML = '<div class="foot-note">El SAC está desactivado en Parámetros.</div>'; return; }
+  const cerrado = periodoCerrado(sk);
+  const emps = empleadosDelPeriodo(sk);
+  const filas = emps.map(e=>({e, s: reciboSacDe(e, sk)})).filter(x=>x.s);
+  const btnPdf = document.getElementById('btnSacPdf'); btnPdf.disabled = !filas.length || !cerrado;
+  btnPdf.title = cerrado ? '' : 'Se habilita cuando cierres ' + mesTxt;
+  if(!filas.length){ cont.innerHTML = `<div class="foot-note">Todavía no hay datos de ${esc(labelPeriodo(sk))} para calcular el SAC.</div>`; return; }
+  const ts = k => filas.reduce((t,x)=>t+(Number(x.s[k])||0),0);
   const nm = p => p ? MESES[parseInt(p.slice(5,7))-1].slice(0,3).toLowerCase()+' '+p.slice(2,4) : '—';
-  const editable = !periodoCerrado(key) && puede('editar');
-  const filas = calcs.map(c=>{ const si = c.sacInfo, nov = c.nov||{};
-    const hist = si.meses.map(x=>`${nm(x.periodo)}: ${fmt2(x.rem)}${x.fuente==='recibo real'?'*':''}`).join(' · ');
-    return `<tr><td class="name">${esc(c.emp.nombre)}<span class="leg">${si.tipo==='proporcional'?'Baja · SAC proporcional':'Legajo '+c.emp.legajo}</span></td>
-      <td class="num">${si.dias}</td><td class="num">${fmt2(si.mejorRem)}<br><span style="font-size:10.5px;color:var(--text-faint)">${nm(si.mesMejorRem)}</span></td>
-      <td class="num">${fmt2(c.sacRem)}</td><td class="num">${fmt2(c.sacNoRem)}</td>
-      <td><input class="cell" type="number" step="0.01" data-sacr="${c.emp.legajo}" value="${nov.sacManual??''}" placeholder="calculado" style="width:110px;" ${editable?'':'disabled'}></td>
-      <td><input class="cell" type="number" step="0.01" data-sacn="${c.emp.legajo}" value="${nov.sacNoRemManual??''}" placeholder="calculado" style="width:100px;" ${editable?'':'disabled'}></td>
-      <td style="font-size:10.5px;color:var(--text-dim);max-width:260px;">${hist}${si.faltan.length?`<br><span style="color:var(--red)">sin recibo: ${si.faltan.map(nm).join(', ')}</span>`:''}</td></tr>`; }).join('');
-  const tot = k => calcs.reduce((t,c)=>t+(c[k]||0),0);
-  // Lo que cuesta el SAC: el recibo de SAC aparte de cada persona (bruto, aportes, neto y contribuciones del empleador)
-  const partes = calcs.map(c=>{ const p = partirSac(c); return p.length > 1 ? p[1] : null; }).filter(Boolean);
-  const ts = k => partes.reduce((t,c)=>t+(Number(c[k])||0),0);
-  const sBruto = ts('sueldoBrutoTotal'), sDesc = ts('totalDescuentos'), sNeto = ts('sueldoNeto'), sContrib = ts('subtotalContribucionesEmpleador'), sCosto = ts('costoTotalEmpleador');
-  const avFuera = calcs.filter(c=>c.sacInfo && c.sacInfo.mesMejorRem && c.sacInfo.mesMejorRem !== key && c.sacInfo.mesMejorRem >= INICIO_SISTEMA && /fuera|gerente/i.test((c.categoria||c.emp.categoria||'')));
-  const resumen = `<div class="cards" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
-      <div class="card"><div class="lbl">SAC bruto</div><div class="val">$${fmt2(sBruto)}</div><div class="sub">rem. $${fmt2(tot('sacRem'))} · no rem. $${fmt2(tot('sacNoRem'))}</div></div>
-      <div class="card"><div class="lbl">A pagar (neto)</div><div class="val">$${fmt2(sNeto)}</div><div class="sub">aportes retenidos $${fmt2(sDesc)}</div></div>
-      <div class="card"><div class="lbl">Contribuciones</div><div class="val">$${fmt2(sContrib)}</div><div class="sub">van al F.931 de ${esc(labelPeriodo(key))}</div></div>
-      <div class="card"><div class="lbl">Costo total SAC</div><div class="val">$${fmt2(sCosto)}</div><div class="sub">bruto + contribuciones</div></div></div>
-    ${avFuera.length ? `<div class="foot-note" style="border-color:var(--orange);margin-bottom:8px;font-size:12px;">⚠ ${avFuera.map(c=>esc(c.emp.nombre)).join(', ')}: la mejor remuneración no es la de este mes. Revisá en “Meses del semestre” si el básico de este mes es el que corresponde.</div>` : ''}`;
-  const ov = abrirDialogo('SAC · '+labelPeriodo(key),
-    resumen + `<p style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Mejor remuneración mensual del semestre × días trabajados / 360. Lo no remunerativo del acuerdo (suma, antigüedad y presentismo) se calcula igual. * = recibo real del estudio. Para corregir a una persona, cargá el importe a mano; vacío = calculado.</p>
-     <div class="table-scroll" style="max-height:55vh"><table class="tbl-arch"><thead><tr><th>Persona</th><th class="num">Días</th><th class="num">Mejor rem.</th><th class="num">SAC rem.</th><th class="num">SAC no rem.</th><th>A mano rem.</th><th>A mano no rem.</th><th>Meses del semestre</th></tr></thead>
-     <tbody>${filas}<tr style="font-weight:700;background:var(--panel2);"><td>TOTAL (${calcs.length})</td><td></td><td></td><td class="num">${fmt2(tot('sacRem'))}</td><td class="num">${fmt2(tot('sacNoRem'))}</td><td colspan="3"></td></tr></tbody></table></div>`,
-    editable ? [{txt:'Cancelar'},{txt:'Guardar', primario:true, accion:()=>{
-      if(!exigirEditable(key)) return; let n = 0;
-      ov.querySelectorAll('[data-sacr],[data-sacn]').forEach(i=>{
-        const leg = Number(i.dataset.sacr || i.dataset.sacn), campo = i.dataset.sacr ? 'sacManual' : 'sacNoRemManual';
-        const nov = ensurePeriod(key)[leg]; if(!nov) return;
-        const v = i.value.trim()==='' ? null : Number(i.value);
-        if((nov[campo]??null) !== v){ if(v==null) delete nov[campo]; else nov[campo] = v; markNov(key, leg); n++; }
-      });
-      if(n){ renderPreliq(); showToast('SAC actualizado ✓'); }
-    }}] : [{txt:'Cerrar'}]);
+  const editable = puede('parametros') || puede('editar');
+  const aviso = cerrado
+    ? `<div class="foot-note" style="border-color:var(--green);margin-bottom:10px;">✓ ${esc(labelPeriodo(sk))} está cerrado: este es el SAC a liquidar. Los recibos de sueldo de ${mesTxt} no llevan SAC.</div>`
+    : `<div class="foot-note" style="border-color:var(--orange);margin-bottom:10px;">Precálculo: ${esc(labelPeriodo(sk))} todavía está abierto. El SAC definitivo sale después de cerrar ${mesTxt} (los recibos se habilitan ahí).</div>`;
+  const cuerpo = filas.map(({e, s})=>{ const si = s.sacInfo || {}, man = sacManualDe(sk, e.legajo) || {};
+    const hist = (si.meses||[]).map(x=>`${nm(x.periodo)}: ${fmt2(x.rem)}`).join(' · ');
+    return `<tr><td class="name">${esc(e.nombre)}<span class="leg">Legajo ${e.legajo}</span></td>
+      <td class="num">${si.dias??'—'}</td><td class="num">${fmt2(si.mejorRem)}<br><span style="font-size:10.5px;color:var(--text-faint)">${nm(si.mesMejorRem)}</span></td>
+      <td class="num">${fmt2(s.sacRem)}</td><td class="num">${fmt2(s.sacNoRem)}</td><td class="num">${fmt2(s.totalDescuentos - (s.retencionGanancias||0))}</td>
+      <td class="num">${fmt2(s.retencionGanancias||0)}</td><td class="num" style="font-weight:700;">${fmt2(s.sueldoNeto)}</td>
+      <td><input class="cell" type="number" step="0.01" data-sr="${e.legajo}" value="${man.rem??''}" placeholder="calculado" style="width:105px;" ${editable?'':'disabled'}></td>
+      <td><input class="cell" type="number" step="0.01" data-sn="${e.legajo}" value="${man.norem??''}" placeholder="calculado" style="width:95px;" ${editable?'':'disabled'}></td>
+      <td style="font-size:10.5px;color:var(--text-dim);max-width:240px;">${hist}${(si.faltan||[]).length?`<br><span style="color:var(--red)">sin recibo: ${si.faltan.map(nm).join(', ')}</span>`:''}</td>
+      <td><button class="btn ghost" data-pdf="${e.legajo}" ${cerrado?'':'disabled'} title="Recibo de SAC">PDF</button></td></tr>`; }).join('');
+  cont.innerHTML = aviso + `<div class="cards">
+      <div class="card"><div class="lbl">SAC bruto</div><div class="val">$${fmt2(ts('sueldoBrutoTotal'))}</div><div class="sub">rem. $${fmt2(ts('sacRem'))} · no rem. $${fmt2(ts('sacNoRem'))}</div></div>
+      <div class="card"><div class="lbl">A pagar (neto)</div><div class="val">$${fmt2(ts('sueldoNeto'))}</div><div class="sub">descuentos $${fmt2(ts('totalDescuentos'))}</div></div>
+      <div class="card"><div class="lbl">Contribuciones</div><div class="val">$${fmt2(ts('subtotalContribucionesEmpleador'))}</div><div class="sub">van al F.931 de ${esc(labelPeriodo(sk))}</div></div>
+      <div class="card"><div class="lbl">Costo total SAC</div><div class="val">$${fmt2(ts('costoTotalEmpleador'))}</div><div class="sub">${filas.length} personas</div></div></div>
+    <div class="table-scroll"><table class="tbl-arch"><thead><tr><th>Persona</th><th class="num">Días</th><th class="num">Mejor rem.</th><th class="num">SAC rem.</th><th class="num">SAC no rem.</th><th class="num">Aportes</th><th class="num">Ganancias</th><th class="num">Neto</th><th>A mano rem.</th><th>A mano no rem.</th><th>Meses del semestre</th><th></th></tr></thead>
+    <tbody>${cuerpo}<tr style="font-weight:700;background:var(--panel2);"><td>TOTAL (${filas.length})</td><td></td><td></td><td class="num">${fmt2(ts('sacRem'))}</td><td class="num">${fmt2(ts('sacNoRem'))}</td><td class="num">${fmt2(ts('totalDescuentos')-ts('retencionGanancias'))}</td><td class="num">${fmt2(ts('retencionGanancias'))}</td><td class="num">${fmt2(ts('sueldoNeto'))}</td><td colspan="4"></td></tr></tbody></table></div>
+    <p style="font-size:11px;color:var(--text-dim);margin-top:8px;">Mejor remuneración mensual del semestre (incluido ${mesTxt}) × días / 360; lo no remunerativo del acuerdo se calcula igual. Para corregir a una persona cargá el importe a mano (vacío = calculado). En el Libro de Sueldos y el F.931 de ${mesTxt} el SAC va junto con el sueldo.</p>`;
+  cont.querySelectorAll('[data-sr],[data-sn]').forEach(i=>i.addEventListener('change', ()=>{
+    const leg = String(i.dataset.sr || i.dataset.sn), campo = i.dataset.sr ? 'rem' : 'norem';
+    const v = i.value.trim()==='' ? null : Number(i.value); if(v!=null && (isNaN(v) || v<0)){ showToast('Importe inválido'); return; }
+    PARAMS.sacManual = Object.assign({}, PARAMS.sacManual||{}); PARAMS.sacManual[sk] = Object.assign({}, PARAMS.sacManual[sk]||{});
+    const r = Object.assign({}, PARAMS.sacManual[sk][leg]||{}); if(v==null) delete r[campo]; else r[campo] = v;
+    PARAMS.sacManual[sk][leg] = r; SacCache.clear(); Ganancias.limpiar(); guardarParametros(); renderSacView(); showToast('SAC actualizado ✓');
+  }));
+  cont.querySelectorAll('[data-pdf]').forEach(b=>b.addEventListener('click', ()=>{
+    const x = filas.find(f=>String(f.e.legajo)===b.dataset.pdf); if(!x || !pdfDisponible()) return;
+    const doc = nuevoPDF(); dibujarReciboPDF(doc, x.s); doc.save('SAC-'+sk.replace('-','')+'-'+x.e.legajo+'.pdf');
+  }));
+}
+document.getElementById('btnSacPdf').addEventListener('click', ()=>{
+  const sk = sacSemestreKey(); if(!periodoCerrado(sk)){ showToast('El SAC se liquida después de cerrar el mes'); return; }
+  const lista = calcsSac(sk).sort((a,b)=>a.emp.legajo-b.emp.legajo); if(!lista.length || !pdfDisponible()) return;
+  const doc = nuevoPDF(); lista.forEach((c,i)=>{ if(i) doc.addPage(); dibujarReciboPDF(doc, c); });
+  doc.save('Recibos-SAC-'+sk.replace('-','')+'.pdf'); showToast(lista.length+' recibos de SAC ✓');
 });
 </script>
 
