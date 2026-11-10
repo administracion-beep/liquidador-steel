@@ -458,7 +458,7 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
       <button class="mod" data-go="preliq"><span class="paso">2</span><h3>Preliquidación</h3><p>Revisá todos los recibos en una planilla antes de emitirlos.</p><div class="dato" id="datoPreliq">—</div></button>
       <button class="mod" data-go="recibos"><span class="paso">3</span><h3>Recibos</h3><p>Generá los recibos, cerrá el mes y descargá los PDF.</p><div class="dato" id="datoRecibos">—</div></button>
       <button class="mod" data-go="cierre"><span class="paso">4</span><h3>Revisión y cierre</h3><p>Errores que bloquean, advertencias, totales y cierre con fotografía.</p><div class="dato" id="datoCierre">—</div></button>
-      <button class="mod" data-go="sac"><span class="paso">🎁</span><h3>SAC</h3><p>Cálculo del aguinaldo y sus recibos, aparte del sueldo. Se liquida después de cerrar el mes.</p><div class="dato" id="datoSac">—</div></button>
+      <button class="mod" data-go="sac"><span class="paso">🎁</span><h3>SAC</h3><p>Cálculo del aguinaldo y sus recibos, aparte del sueldo. Se paga el 18/12 (30/06 en junio).</p><div class="dato" id="datoSac">—</div></button>
       <button class="mod" data-go="lsd"><span class="paso">5</span><h3>F.931</h3><p>Archivo TXT para subir a ARCA y el F.931 estimado con las mismas bases.</p><div class="dato" id="dato931">—</div></button>
       <button class="mod" data-go="boletas"><span class="paso">6</span><h3>Boletas</h3><p>FAECYS, CEC, OSECAC e INACAP del mes.</p><div class="dato" id="datoBoletas">—</div></button>
       <button class="mod" data-go="archivo"><span class="paso">7</span><h3>Archivo</h3><p>Todas las liquidaciones: meses cerrados por el sistema y recibos reales anteriores.</p><div class="dato" id="datoArchivo">—</div></button>
@@ -592,7 +592,7 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
 
   <div id="view-sac" style="display:none">
     <div class="section-head">
-      <div><h2 id="sacTitulo">SAC (aguinaldo)</h2><p>Se liquida en junio y diciembre, en recibos aparte del sueldo. Se calcula después de cerrar el mes, con ese sueldo incluido en la mejor remuneración.</p></div>
+      <div><h2 id="sacTitulo">SAC (aguinaldo)</h2><p>Se liquida en junio y diciembre, en recibos aparte del sueldo, con el sueldo de ese mes incluido en la mejor remuneración. Se paga antes que el sueldo del mes (mes vencido).</p></div>
       <div class="actions"><button class="btn primary" id="btnSacPdf">⬇ Recibos de SAC (PDF)</button></div>
     </div>
     <div id="sacCont"></div>
@@ -6191,15 +6191,15 @@ function renderSacView(){
   const cerrado = periodoCerrado(sk);
   const emps = empleadosDelPeriodo(sk);
   const filas = emps.map(e=>({e, s: reciboSacDe(e, sk)})).filter(x=>x.s);
-  const btnPdf = document.getElementById('btnSacPdf'); btnPdf.disabled = !filas.length || !cerrado;
-  btnPdf.title = cerrado ? '' : 'Se habilita cuando cierres ' + mesTxt;
+  const btnPdf = document.getElementById('btnSacPdf'); btnPdf.disabled = !filas.length;
+  btnPdf.title = '';
   if(!filas.length){ cont.innerHTML = `<div class="foot-note">Todavía no hay datos de ${esc(labelPeriodo(sk))} para calcular el SAC.</div>`; return; }
   const ts = k => filas.reduce((t,x)=>t+(Number(x.s[k])||0),0);
   const nm = p => p ? MESES[parseInt(p.slice(5,7))-1].slice(0,3).toLowerCase()+' '+p.slice(2,4) : '—';
   const editable = puede('parametros') || puede('editar');
   const aviso = cerrado
     ? `<div class="foot-note" style="border-color:var(--green);margin-bottom:10px;">✓ ${esc(labelPeriodo(sk))} está cerrado: este es el SAC a liquidar. Los recibos de sueldo de ${mesTxt} no llevan SAC.</div>`
-    : `<div class="foot-note" style="border-color:var(--orange);margin-bottom:10px;">Precálculo: ${esc(labelPeriodo(sk))} todavía está abierto. El SAC definitivo sale después de cerrar ${mesTxt} (los recibos se habilitan ahí).</div>`;
+    : `<div class="foot-note" style="border-color:var(--orange);margin-bottom:10px;">${esc(labelPeriodo(sk))} todavía está abierto: el SAC se calcula con el sueldo de ${mesTxt} cargado hasta hoy (se paga el ${m==='06'?'30/06':'18/12'}, antes del sueldo). Cargá antes las novedades de ${mesTxt} que cambien el básico; si después cambia algo, revisá el SAC antes de cerrar.</div>`;
   const cuerpo = filas.map(({e, s})=>{ const si = s.sacInfo || {}, man = sacManualDe(sk, e.legajo) || {};
     const hist = (si.meses||[]).map(x=>`${nm(x.periodo)}: ${fmt2(x.rem)}`).join(' · ');
     return `<tr><td class="name">${esc(e.nombre)}<span class="leg">Legajo ${e.legajo}</span></td>
@@ -6209,7 +6209,7 @@ function renderSacView(){
       <td><input class="cell" type="number" step="0.01" data-sr="${e.legajo}" value="${man.rem??''}" placeholder="calculado" style="width:105px;" ${editable?'':'disabled'}></td>
       <td><input class="cell" type="number" step="0.01" data-sn="${e.legajo}" value="${man.norem??''}" placeholder="calculado" style="width:95px;" ${editable?'':'disabled'}></td>
       <td style="font-size:10.5px;color:var(--text-dim);max-width:240px;">${hist}${(si.faltan||[]).length?`<br><span style="color:var(--red)">sin recibo: ${si.faltan.map(nm).join(', ')}</span>`:''}</td>
-      <td><button class="btn ghost" data-pdf="${e.legajo}" ${cerrado?'':'disabled'} title="Recibo de SAC">PDF</button></td></tr>`; }).join('');
+      <td><button class="btn ghost" data-pdf="${e.legajo}" title="Recibo de SAC">PDF</button></td></tr>`; }).join('');
   cont.innerHTML = aviso + `<div class="cards">
       <div class="card"><div class="lbl">SAC bruto</div><div class="val">$${fmt2(ts('sueldoBrutoTotal'))}</div><div class="sub">rem. $${fmt2(ts('sacRem'))} · no rem. $${fmt2(ts('sacNoRem'))}</div></div>
       <div class="card"><div class="lbl">A pagar (neto)</div><div class="val">$${fmt2(ts('sueldoNeto'))}</div><div class="sub">descuentos $${fmt2(ts('totalDescuentos'))}</div></div>
@@ -6231,7 +6231,7 @@ function renderSacView(){
   }));
 }
 document.getElementById('btnSacPdf').addEventListener('click', ()=>{
-  const sk = sacSemestreKey(); if(!periodoCerrado(sk)){ showToast('El SAC se liquida después de cerrar el mes'); return; }
+  const sk = sacSemestreKey();
   const lista = calcsSac(sk).sort((a,b)=>a.emp.legajo-b.emp.legajo); if(!lista.length || !pdfDisponible()) return;
   const doc = nuevoPDF(); lista.forEach((c,i)=>{ if(i) doc.addPage(); dibujarReciboPDF(doc, c); });
   doc.save('Recibos-SAC-'+sk.replace('-','')+'.pdf'); showToast(lista.length+' recibos de SAC ✓');
