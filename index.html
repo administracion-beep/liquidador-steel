@@ -458,7 +458,7 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
       <button class="mod" data-go="preliq"><span class="paso">2</span><h3>Preliquidación</h3><p>Revisá todos los recibos en una planilla antes de emitirlos.</p><div class="dato" id="datoPreliq">—</div></button>
       <button class="mod" data-go="recibos"><span class="paso">3</span><h3>Recibos</h3><p>Generá los recibos, cerrá el mes y descargá los PDF.</p><div class="dato" id="datoRecibos">—</div></button>
       <button class="mod" data-go="cierre"><span class="paso">4</span><h3>Revisión y cierre</h3><p>Errores que bloquean, advertencias, totales y cierre con fotografía.</p><div class="dato" id="datoCierre">—</div></button>
-      <button class="mod" data-go="sac"><span class="paso">🎁</span><h3>SAC</h3><p>Aguinaldo de junio y diciembre, con recibos aparte. Se calcula después de cerrar el mes.</p><div class="dato" id="datoSac">—</div></button>
+      <button class="mod" data-go="sac"><span class="paso">🎁</span><h3>SAC</h3><p>Cálculo del aguinaldo y sus recibos, aparte del sueldo. Se liquida después de cerrar el mes.</p><div class="dato" id="datoSac">—</div></button>
       <button class="mod" data-go="lsd"><span class="paso">5</span><h3>F.931</h3><p>Archivo TXT para subir a ARCA y el F.931 estimado con las mismas bases.</p><div class="dato" id="dato931">—</div></button>
       <button class="mod" data-go="boletas"><span class="paso">6</span><h3>Boletas</h3><p>FAECYS, CEC, OSECAC e INACAP del mes.</p><div class="dato" id="datoBoletas">—</div></button>
       <button class="mod" data-go="archivo"><span class="paso">7</span><h3>Archivo</h3><p>Todas las liquidaciones: meses cerrados por el sistema y recibos reales anteriores.</p><div class="dato" id="datoArchivo">—</div></button>
@@ -628,11 +628,6 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
         <option value="auto">Fuente: real si existe, si no sistema</option>
         <option value="real">Fuente: solo recibos reales</option>
         <option value="sistema">Fuente: solo cálculo del sistema</option>
-      </select>
-      <select class="cell" id="selPreTipo" style="text-align:left;" title="En junio y diciembre el SAC va en recibo aparte">
-        <option value="todos">Recibos: sueldo y SAC</option>
-        <option value="sueldo">Recibos: solo sueldo</option>
-        <option value="sac">Recibos: solo SAC</option>
       </select>
       <input class="cell txt" id="inpPreBuscar" placeholder="Buscar nombre o legajo" style="min-width:170px;">
     </div>
@@ -2979,6 +2974,7 @@ function onPeriodChange(){
   if(document.getElementById('view-lsd').style.display !== 'none') renderLsdView();
   if(document.getElementById('view-param').style.display !== 'none') renderParametros(true);
   updateCierrePill();
+  try{ mostrarSacSegunMes(); }catch(e){}
 }
 selMes.addEventListener('change', onPeriodChange);
 selAnio.addEventListener('change', onPeriodChange);
@@ -3115,6 +3111,7 @@ document.querySelectorAll('.mod').forEach(card=>{
   });
 });
 function renderInicio(){
+  try{ mostrarSacSegunMes(); }catch(e){}
   const key = currentKey();
   document.getElementById('inicioPeriodo').textContent = selMes.value.charAt(0) + selMes.value.slice(1).toLowerCase() + ' ' + selAnio.value;
   const set = (id, html)=>{ document.getElementById(id).innerHTML = html; };
@@ -3147,7 +3144,7 @@ function renderInicio(){
     const n = EMPLOYEES.filter(e=>e.activo!==false && enPrueba(e)).length;
     return `Licencias /${PARAMS.divisorLicencia} · prueba ${PARAMS.mesesPrueba} meses <span class="dim">· ${n} ${n===1?'persona':'personas'} a prueba${PARAMS_DB===false?' · sin guardar':''}</span>`;
   });
-  seguro('datoSac', ()=>{ const [y,mm] = key.split('-').map(Number); const sk = y+'-'+(mm<=6?'06':'12'); return `${mm<=6?'1°':'2°'} semestre ${y} <span class="dim">· ${periodoCerrado(sk) ? 'listo para liquidar' : 'se calcula al cerrar '+(mm<=6?'junio':'diciembre')}</span>`; });
+  seguro('datoSac', ()=>{ if(!esMesSac(key)) return '—'; const t = calcsSac(key).reduce((a,c)=>a+(c.sueldoNeto||0),0); return `${fmt(t)} <span class="dim">neto · ${periodoCerrado(key) ? 'listo para liquidar' : 'precálculo'}</span>`; });
   seguro('datoCierre', ()=> cerrado ? '🔒 cerrado' + (SNAPSHOTS[key] ? ' · con fotografía' : '') : (ReglasEstado.esSimulacion(PARAMS, key) ? '◐ simulación: reglas sin validar' : '○ listo para revisar'));
   seguro('datoArchivo', ()=>{
     const n = Object.values(CIERRES).filter(x=>x && x.cerrado).length;
@@ -5238,14 +5235,14 @@ async function archivoGastos(cont){
 
 // ---------------- Preliquidación: planilla de todos los recibos, con filtros ----------------
 const PRELIQ_COLS = [
-  ['basico','Básico'],['antig','Antigüedad'],['hs','Hs extra'],['plus','Plus feriado'],['pres','Presentismo'],['lic','Licencias'],['descLic','Desc. días lic.'],['susp','Suspensión'],['otrosRem','Otros rem.'],['sac','SAC'],['rem','REMUNERATIVO'],
-  ['sumas','Sumas (c/OS)'],['fallo','Fallo de caja'],['adic','Adic./otros'],['sacNr','SAC no rem.'],['norem','NO REMUNERATIVO'],
+  ['basico','Básico'],['antig','Antigüedad'],['hs','Hs extra'],['plus','Plus feriado'],['pres','Presentismo'],['lic','Licencias'],['descLic','Desc. días lic.'],['susp','Suspensión'],['otrosRem','Otros rem.'],['rem','REMUNERATIVO'],
+  ['sumas','Sumas (c/OS)'],['fallo','Fallo de caja'],['adic','Adic./otros'],['norem','NO REMUNERATIVO'],
   ['jub','Jubilación'],['ley','Ley 19032'],['os','Obra social'],['sind','Sindicato'],['fae','FAECYS'],['aeo','3594 Aporte extraord. OSECAC'],['apMJ','4170 Aporte adic. OS ½ jornada'],['gan','4400 Ganancias'],['otrosDesc','Adelantos/otros'],['desc','DESCUENTOS'],['neto','NETO']
 ];
 // Grupos de la planilla: el básico siempre se ve; el detalle de cada grupo se abre y se cierra
 const PRELIQ_GRUPOS = [
-  {id:'rem',   label:'Remunerativo',    fijas:['basico'], detalle:['antig','hs','plus','pres','lic','descLic','susp','otrosRem','sac'], total:'rem'},
-  {id:'norem', label:'No remunerativo', fijas:[], detalle:['sumas','fallo','adic','sacNr'], total:'norem'},
+  {id:'rem',   label:'Remunerativo',    fijas:['basico'], detalle:['antig','hs','plus','pres','lic','descLic','susp','otrosRem'], total:'rem'},
+  {id:'norem', label:'No remunerativo', fijas:[], detalle:['sumas','fallo','adic'], total:'norem'},
   {id:'desc',  label:'Descuentos',      fijas:[], detalle:['jub','ley','os','sind','fae','aeo','apMJ','gan','otrosDesc'], total:'desc'}
 ];
 const PRELIQ_ABIERTOS = new Set(['norem']);   // no remunerativo arranca abierto (ahí se corrigen Sumas y Adic./otros)
@@ -5316,11 +5313,7 @@ function preliqFilas(){
     const legs = (modo==='real' || (modo==='auto' && hayReal))
       ? Object.keys(RECIBOS_REALES).filter(k=>k.startsWith(p+'|')).map(k=>Number(k.split('|')[1]))
       : empleadosDelPeriodo(p).map(e=>e.legajo);
-    const tipo = (document.getElementById('selPreTipo')||{}).value || 'todos';
-    if(tipo !== 'sac') legs.forEach(l=>{ const emp = EMPLOYEES.find(e=>e.legajo===l); if(!emp) return; const f = preliqFila(p, emp, modo); if(f) rows.push(f); });
-    // junio y diciembre: el SAC en filas propias (recibo aparte), así se ve cuánto es sueldo y cuánto SAC
-    if(tipo !== 'sueldo' && modo !== 'real' && p >= INICIO_SISTEMA && esMesSac(p) && PARAMS.sac !== false)
-      empleadosDelPeriodo(p).forEach(emp=>{ const sc = reciboSacDe(emp, p); if(sc){ const f = preliqFila(p, emp, 'sistema', sc); if(f) rows.push(f); } });
+    legs.forEach(l=>{ const emp = EMPLOYEES.find(e=>e.legajo===l); if(!emp) return; const f = preliqFila(p, emp, modo); if(f) rows.push(f); });
   });
   rows.sort((a,b)=> a.per<b.per ? -1 : a.per>b.per ? 1 : (a.esSac!==b.esSac ? (a.esSac?1:-1) : a.leg-b.leg));
   return rows;
@@ -5346,7 +5339,7 @@ function renderPreliq(){
     fillSelect(document.getElementById('selPreMes'), [['','Mes: todos'], ...MESES.map((n,i)=>[String(i+1).padStart(2,'0'), n])], currentKey().split('-')[1]);
   }
   renderNoRemList();
-  document.getElementById('btnPreliqSac').style.display = /-(06|12)$/.test(currentKey()) ? '' : 'none';   // el SAC solo existe en junio y diciembre
+  document.getElementById('btnPreliqSac').style.display = 'none';   // el SAC tiene su propia tarjeta (junio y diciembre)
   { const mesF = document.getElementById('selPreMes').value;
     const conRecibo = new Set(preliqFilas().filter(r => !mesF || r.per.endsWith('-'+mesF)).map(r => String(r.leg)));
     const fBaja = f => f ? String(f).split('-').reverse().join('/') : '';
@@ -5444,7 +5437,7 @@ function renderPreliq(){
     inp.addEventListener('focus', ()=>inp.select());
   });
 }
-['selPrePersona','selPreCat','selPreFuente','selPreTipo'].forEach(id=>document.getElementById(id).addEventListener('change', renderPreliq));
+['selPrePersona','selPreCat','selPreFuente'].forEach(id=>document.getElementById(id).addEventListener('change', renderPreliq));
 // elegir un mes en la preliquidación cambia también el mes de arriba (los conceptos y las correcciones se cargan para ese mes)
 ['selPreAnio','selPreMes'].forEach(id=>document.getElementById(id).addEventListener('change', ()=>{
   const mes = document.getElementById('selPreMes').value, anio = document.getElementById('selPreAnio').value;
@@ -6185,6 +6178,11 @@ document.getElementById('btnPreliqSac').addEventListener('click', ()=>{ document
 
 // ===================== Vista SAC =====================
 function sacSemestreKey(){ const [y,m] = currentKey().split('-').map(Number); return y + '-' + (m<=6 ? '06' : '12'); }
+function mostrarSacSegunMes(){
+  const ver = esMesSac(currentKey()) && PARAMS.sac !== false;
+  document.querySelectorAll('[data-go="sac"],[data-tab="sac"]').forEach(el=>{ el.style.display = ver ? '' : 'none'; });
+  if(!ver && document.getElementById('view-sac').style.display !== 'none'){ const t = document.querySelector('[data-tab="inicio"]'); if(t) t.click(); }
+}
 function renderSacView(){
   const cont = document.getElementById('sacCont'); const sk = sacSemestreKey(); const [y, m] = sk.split('-');
   const sem = (m==='06' ? '1°' : '2°') + ' semestre ' + y, mesTxt = m==='06' ? 'junio' : 'diciembre';
