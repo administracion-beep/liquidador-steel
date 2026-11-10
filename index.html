@@ -629,6 +629,11 @@ body[data-rol="consulta"] .solo-edicion{display:none !important;}
         <option value="real">Fuente: solo recibos reales</option>
         <option value="sistema">Fuente: solo cálculo del sistema</option>
       </select>
+      <select class="cell" id="selPreTipo" style="text-align:left;" title="En junio y diciembre el SAC va en recibo aparte">
+        <option value="todos">Recibos: sueldo y SAC</option>
+        <option value="sueldo">Recibos: solo sueldo</option>
+        <option value="sac">Recibos: solo SAC</option>
+      </select>
       <input class="cell txt" id="inpPreBuscar" placeholder="Buscar nombre o legajo" style="min-width:170px;">
     </div>
     <div id="noRemPanel" class="foot-note no-print" style="border-color:var(--yellow);">
@@ -5233,14 +5238,14 @@ async function archivoGastos(cont){
 
 // ---------------- Preliquidación: planilla de todos los recibos, con filtros ----------------
 const PRELIQ_COLS = [
-  ['basico','Básico'],['antig','Antigüedad'],['hs','Hs extra'],['plus','Plus feriado'],['pres','Presentismo'],['lic','Licencias'],['descLic','Desc. días lic.'],['susp','Suspensión'],['otrosRem','Otros rem.'],['rem','REMUNERATIVO'],
-  ['sumas','Sumas (c/OS)'],['fallo','Fallo de caja'],['adic','Adic./otros'],['norem','NO REMUNERATIVO'],
+  ['basico','Básico'],['antig','Antigüedad'],['hs','Hs extra'],['plus','Plus feriado'],['pres','Presentismo'],['lic','Licencias'],['descLic','Desc. días lic.'],['susp','Suspensión'],['otrosRem','Otros rem.'],['sac','SAC'],['rem','REMUNERATIVO'],
+  ['sumas','Sumas (c/OS)'],['fallo','Fallo de caja'],['adic','Adic./otros'],['sacNr','SAC no rem.'],['norem','NO REMUNERATIVO'],
   ['jub','Jubilación'],['ley','Ley 19032'],['os','Obra social'],['sind','Sindicato'],['fae','FAECYS'],['aeo','3594 Aporte extraord. OSECAC'],['apMJ','4170 Aporte adic. OS ½ jornada'],['gan','4400 Ganancias'],['otrosDesc','Adelantos/otros'],['desc','DESCUENTOS'],['neto','NETO']
 ];
 // Grupos de la planilla: el básico siempre se ve; el detalle de cada grupo se abre y se cierra
 const PRELIQ_GRUPOS = [
-  {id:'rem',   label:'Remunerativo',    fijas:['basico'], detalle:['antig','hs','plus','pres','lic','descLic','susp','otrosRem'], total:'rem'},
-  {id:'norem', label:'No remunerativo', fijas:[], detalle:['sumas','fallo','adic'], total:'norem'},
+  {id:'rem',   label:'Remunerativo',    fijas:['basico'], detalle:['antig','hs','plus','pres','lic','descLic','susp','otrosRem','sac'], total:'rem'},
+  {id:'norem', label:'No remunerativo', fijas:[], detalle:['sumas','fallo','adic','sacNr'], total:'norem'},
   {id:'desc',  label:'Descuentos',      fijas:[], detalle:['jub','ley','os','sind','fae','aeo','apMJ','gan','otrosDesc'], total:'desc'}
 ];
 const PRELIQ_ABIERTOS = new Set(['norem']);   // no remunerativo arranca abierto (ahí se corrigen Sumas y Adic./otros)
@@ -5249,15 +5254,16 @@ function diasAusencia(nov){
   ((nov&&nov.licencias)||[]).forEach(l=>{ const d = Number(l.dias)||0; if(/suspensi/i.test(l.tipo||'')) susp += d; else lic += d; });
   return {lic, susp};
 }
-function preliqFila(per, emp, modo){
-  const real = RECIBOS_REALES[per+'|'+emp.legajo];
+function preliqFila(per, emp, modo, cSac){
+  const real = cSac ? null : RECIBOS_REALES[per+'|'+emp.legajo];
+  if(cSac) modo = 'sistema';
   const nov = (STATE[per]||{})[emp.legajo];
   const usar = modo==='real' ? 'real' : (modo==='sistema' ? 'sistema' : (real ? 'real' : 'sistema'));
   if(usar==='real' && !real) return null;
   if(usar==='sistema' && !nov) return null;
   const [a,m] = per.split('-').map(Number);
-  const base = {per, perLabel: MESES[m-1].slice(0,3)+' '+a, leg: emp.legajo, nombre: emp.nombre, fuente: usar==='real'?'Real':'Sistema',
-    editable: usar==='sistema' && !periodoCerrado(per) && puede('editar')};
+  const base = {per, perLabel: (cSac ? 'SAC ' : '') + MESES[m-1].slice(0,3)+' '+a, leg: emp.legajo, nombre: emp.nombre, fuente: cSac ? 'SAC' : (usar==='real'?'Real':'Sistema'), esSac: !!cSac,
+    editable: !cSac && usar==='sistema' && !periodoCerrado(per) && puede('editar')};
   if(usar==='real'){
     const g = (...cods)=>real.conceptos.filter(c=>cods.includes(c[0])).reduce((s,c)=>s+c[2],0);
     const basico=g('2010'), antig=g('2020'), hs=g('2210','2220'), plus=g('2460','2461'), pres=g('2050');
@@ -5274,16 +5280,22 @@ function preliqFila(per, emp, modo){
     const dn = diasAusencia(nov);
     const diasLic = dn.lic || cLic.reduce((t,c)=>t+(Number(c[3])||0),0), diasSusp = dn.susp || cSusp.reduce((t,c)=>t+(Number(c[3])||0),0);
     return {...base, cat:(categoriaCanon(emp.categoria)==='Gerente' ? 'Gerente' : categoriaCanon((nov&&nov.categoria)||emp.categoria||'')), basico, antig, hs, plus, pres, lic, descLic, susp, diasLic, diasSusp, otrosRem: real.rem-basico-antig-hs-plus-pres-lic-descLic-susp, rem: real.rem,
-      sumas, fallo: falloR, adic: real.norem-sumas-falloR, norem: real.norem, jub, ley, os, sind, fae, aeo, apMJ, gan, otrosDesc: real.desc-jub-ley-os-sind-fae-aeo-apMJ-gan, desc: real.desc, neto: real.neto!=null?real.neto:(real.rem+real.norem-real.desc)};
+      sumas, fallo: falloR, adic: real.norem-sumas-falloR, sac:0, sacNr:0, norem: real.norem, jub, ley, os, sind, fae, aeo, apMJ, gan, otrosDesc: real.desc-jub-ley-os-sind-fae-aeo-apMJ-gan, desc: real.desc, neto: real.neto!=null?real.neto:(real.rem+real.norem-real.desc)};
   }
-  const c = reciboDe(emp, per); if(!c) return null;
-  const sumas = c.noRemPermanenteTotal - c.noRemAportable;
+  const c = cSac || reciboDe(emp, per); if(!c) return null;
+  const sumas = cSac ? 0 : c.noRemPermanenteTotal - c.noRemAportable;
   const dn = diasAusencia(nov);
-  return {...base, cat: categoriaCanon(c.categoria||''), basico:c.basico, basicoMes:c.basicoMensual, diasTrab:c.diasTrabajados, ingMes:c.ingresoEnMes?c.emp.fingreso:null, jorn:c.jornada, bajaMes:c.bajaEnMes?c.emp.fbaja:null, antig:c.antiguedad, hs:c.hsExtra50Monto+c.hsExtra100Monto, plus:c.plusFeriadoTotal, pres:c.presentismo,
+  const fila = {...base, cat: categoriaCanon(c.categoria||''), basico:c.basico, basicoMes:c.basicoMensual, diasTrab:c.diasTrabajados, ingMes:c.ingresoEnMes?c.emp.fingreso:null, jorn:c.jornada, bajaMes:c.bajaEnMes?c.emp.fbaja:null, antig:c.antiguedad, hs:c.hsExtra50Monto+c.hsExtra100Monto, plus:c.plusFeriadoTotal, pres:c.presentismo,
     lic:c.pagoLicencias, descLic:-(c.descuentoDiasLicencia+c.descuentoSinGoce), susp:-c.descuentoSuspension, diasLic:dn.lic, diasSusp:dn.susp,
     otrosRem: c.ajusteRem, rem:c.remunerativoTotal,
-    sumas, fallo:(c.noRemFalloBase||0)-(c.falloAplicado||0), falloExc:c.falloExcedente||0, adic:c.noRemunerativoTotal-sumas-((c.noRemFalloBase||0)-(c.falloAplicado||0)), norem:c.noRemunerativoTotal, jub:c.jubilacion, ley:c.ley19032, os:c.obraSocial, sind:c.sindicato, fae:c.faecys,
+    sumas, fallo:(c.noRemFalloBase||0)-(c.falloAplicado||0), falloExc:c.falloExcedente||0, adic:c.noRemunerativoTotal-sumas-((c.noRemFalloBase||0)-(c.falloAplicado||0))-(c.sacNoRem||0), sac:c.sacRem||0, sacNr:c.sacNoRem||0, norem:c.noRemunerativoTotal, jub:c.jubilacion, ley:c.ley19032, os:c.obraSocial, sind:c.sindicato, fae:c.faecys,
     aeo:c.aporteExtraordOsecac, apMJ:c.aporteAdicionalMJ, gan:c.retencionGanancias||0, otrosDesc:c.totalOtrosDescuentos+c.retencionAlimentaria, desc:c.totalDescuentos, neto:c.sueldoNeto, mSumas:c.noRemSumasManual, mAdic:c.noRemAdicManual};
+  if(cSac){   // recibo de SAC: solo el SAC y sus descuentos
+    ['basico','antig','hs','plus','pres','lic','descLic','susp','otrosRem','sumas','fallo','adic'].forEach(k=>{ fila[k] = 0; });
+    Object.assign(fila, {basicoMes:0, diasLic:0, diasSusp:0, falloExc:0, mSumas:null, mAdic:null});
+    fila.otrosDesc = Dinero.redondear(fila.desc - ['jub','ley','os','sind','fae','aeo','apMJ','gan'].reduce((t,k)=>t+(Number(fila[k])||0),0));
+  }
+  return fila;
 }
 function preliqMeses(anio){
   const hoy = new Date(); let hk = hoy.getFullYear()+'-'+String(hoy.getMonth()+1).padStart(2,'0'); const out = [];
@@ -5304,9 +5316,13 @@ function preliqFilas(){
     const legs = (modo==='real' || (modo==='auto' && hayReal))
       ? Object.keys(RECIBOS_REALES).filter(k=>k.startsWith(p+'|')).map(k=>Number(k.split('|')[1]))
       : empleadosDelPeriodo(p).map(e=>e.legajo);
-    legs.forEach(l=>{ const emp = EMPLOYEES.find(e=>e.legajo===l); if(!emp) return; const f = preliqFila(p, emp, modo); if(f) rows.push(f); });
+    const tipo = (document.getElementById('selPreTipo')||{}).value || 'todos';
+    if(tipo !== 'sac') legs.forEach(l=>{ const emp = EMPLOYEES.find(e=>e.legajo===l); if(!emp) return; const f = preliqFila(p, emp, modo); if(f) rows.push(f); });
+    // junio y diciembre: el SAC en filas propias (recibo aparte), así se ve cuánto es sueldo y cuánto SAC
+    if(tipo !== 'sueldo' && modo !== 'real' && p >= INICIO_SISTEMA && esMesSac(p) && PARAMS.sac !== false)
+      empleadosDelPeriodo(p).forEach(emp=>{ const sc = reciboSacDe(emp, p); if(sc){ const f = preliqFila(p, emp, 'sistema', sc); if(f) rows.push(f); } });
   });
-  rows.sort((a,b)=> a.per<b.per ? -1 : a.per>b.per ? 1 : a.leg-b.leg);
+  rows.sort((a,b)=> a.per<b.per ? -1 : a.per>b.per ? 1 : (a.esSac!==b.esSac ? (a.esSac?1:-1) : a.leg-b.leg));
   return rows;
 }
 function fillSelect(sel, opts, preferido){
@@ -5428,7 +5444,7 @@ function renderPreliq(){
     inp.addEventListener('focus', ()=>inp.select());
   });
 }
-['selPrePersona','selPreCat','selPreFuente'].forEach(id=>document.getElementById(id).addEventListener('change', renderPreliq));
+['selPrePersona','selPreCat','selPreFuente','selPreTipo'].forEach(id=>document.getElementById(id).addEventListener('change', renderPreliq));
 // elegir un mes en la preliquidación cambia también el mes de arriba (los conceptos y las correcciones se cargan para ese mes)
 ['selPreAnio','selPreMes'].forEach(id=>document.getElementById(id).addEventListener('change', ()=>{
   const mes = document.getElementById('selPreMes').value, anio = document.getElementById('selPreAnio').value;
