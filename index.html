@@ -2233,7 +2233,7 @@ function escalaVigente(key){
   if(p && (p.editada || !ESCALA_FAECYS[key])) return p;
   return ESCALA_FAECYS[key] || p || null;
 }
-function basicoEfectivo(emp, nov, key){ return Motor.basicoEfectivo(emp, nov, escalaVigente(key || currentKey())); }
+function basicoEfectivo(emp, nov, key){ const k = key || currentKey(); return Motor.basicoEfectivo(emp, novConBasico(emp, nov, k), escalaVigente(k)); }
 
 // Categorías con un solo nombre (los recibos viejos traen MAESTRANZA "A", MARSTRANZA, MEDIA JORNADA, etc.).
 // La media jornada no es categoría: va en el campo Jornada del legajo.
@@ -2634,10 +2634,39 @@ function osecacDe(emp, nov){ return Motor.osecacDe(emp, nov); }
 const SMVM = {'2026-09':383800,'2026-10':391200,'2026-11':398800,'2026-12':406400,'2027-01':414200,'2027-02':422000,'2027-03':429600,'2027-04':437000};
 function baseArtPasDe(key){ return SMVM[key] ? String(SMVM[key]) : null; }
 function conBaseArtPas(f, key){ const b = baseArtPasDe(key); return b ? Object.assign({}, f, {baseArtPas:b}) : f; }
+// Fuera de convenio / gerentes: si el mes no tiene básico propio, se toma el último liquidado (nunca menos que la ficha).
+// Así un mes nuevo no vuelve a un básico viejo de la ficha y no cambia la mejor remuneración del SAC.
+function basicoHeredado(emp, key){
+  if(!emp || Motor.regimenDe(emp, null).regimen !== 'fuera_convenio') return null;
+  let [a, m] = key.split('-').map(Number);
+  for(let i=0; i<24; i++){
+    m--; if(m===0){ m=12; a--; }
+    const n = (STATE[a+'-'+String(m).padStart(2,'0')]||{})[emp.legajo];
+    if(n && n.basico!=null && n.basico!=='' && !isNaN(Number(n.basico))) return Math.max(Number(n.basico), Number(emp.basico)||0);
+  }
+  return null;
+}
+function novConBasico(emp, nov, key){
+  if(!nov || (nov.basico!=null && nov.basico!=='')) return nov;
+  const h = basicoHeredado(emp, key); return h==null ? nov : Object.assign({}, nov, {basico:h, basicoHeredado:true});
+}
+// Fallo de caja Cajero B (criterio Marita 11/2026): noviembre igual que septiembre; diciembre = adicional art. 30 Cajero B de la circular (625.175,70) ÷ 12.
+// Los demás meses quedan como se cargan a mano (base + %). Si el mes no tiene el concepto, se agrega solo.
+const FALLO_CAJA_MES = {'2026-11':51164.80, '2026-12':52097.98};
+const falloCajaDelMes = key => FALLO_CAJA_MES[key]!=null ? FALLO_CAJA_MES[key] : null;
+const esFalloCaja = c => !!(c && (c.fallo || /fallo\s*de\s*caja/i.test(c.concepto||'')));
+function noRemDelMes(key){
+  const lista = (GLOBAL[key] && GLOBAL[key].noRemunerativos) || [];
+  const f = falloCajaDelMes(key); if(f==null) return lista;
+  const out = lista.map(c => esFalloCaja(c) ? Object.assign({}, c, {monto:f, auto:true}) : c);
+  if(!out.some(esFalloCaja)) out.push({concepto:'Fallo de caja (Cajero B)', monto:f, tipo:'adicional', solo:'Cajero\\s*B', fallo:true, auto:true});
+  return out;
+}
 function entradaMotor(emp, nov, key, opt){
+  nov = novConBasico(emp, nov, key);
   const gan = (opt && opt.sinGanancias) ? null : Ganancias.retencion(emp, key);
   return {retGanancias: gan ? gan.retencion : 0, ganInfo: gan, emp, nov, periodo:key, params:PARAMS, feriadosMes: feriadosDelMes(+key.slice(0,4), +key.slice(5)), pl: paramsLab(key),
-          noRem: (GLOBAL[key] && GLOBAL[key].noRemunerativos) || [],
+          noRem: noRemDelMes(key),
           f931: conBaseArtPas(Object.assign({alicuota:18, detArt22:7003.68}, (PARAMS.f931 || {})[key] || {}), key),
           sac: sacEntrada(emp, key), escala: escalaVigente(key), inacap: inacapDelPeriodo(key)};
 }
@@ -3416,7 +3445,9 @@ function renderNoRemList(){
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border:1px solid var(--line-soft);border-radius:6px;font-size:12.5px;margin-bottom:5px;background:var(--panel2);';
     const esFallo = c.fallo && c.base!=null;
-    if(esFallo){
+    if(esFallo && falloCajaDelMes(key)!=null){
+      row.innerHTML = `<div><b>${esc(c.concepto)}</b> — <b>${fmt2(falloCajaDelMes(key))}</b> <span style="color:var(--text-dim);font-size:10.5px;">(automático para ${esc(labelPeriodo(key))} · solo Cajero B · menos el faltante de Novedades)</span></div>`;
+    } else if(esFallo){
       row.innerHTML = `<div><b>${esc(c.concepto)}</b> — base ${fmt2(c.base)} + <input class="cell fallo-pct" type="number" step="0.01" min="0" max="100" value="${esc(c.pct||0)}" style="width:70px;display:inline-block;padding:2px 6px;" aria-label="% de aumento del fallo de caja">% = <b>${fmt2(c.monto)}</b> <span style="color:var(--text-dim);font-size:10.5px;">(solo Cajero B · menos el faltante de Novedades)</span></div>`;
       const ip = row.querySelector('.fallo-pct'); ip.disabled = periodoCerrado(key) || !puede('editar');
       ip.addEventListener('change', ()=>{ if(!exigirEditable(key)){ renderNoRemList(); return; } const v = parseFloat(ip.value);
@@ -6082,8 +6113,19 @@ document.getElementById('btnPreliqSac').addEventListener('click', ()=>{
       <td><input class="cell" type="number" step="0.01" data-sacn="${c.emp.legajo}" value="${nov.sacNoRemManual??''}" placeholder="calculado" style="width:100px;" ${editable?'':'disabled'}></td>
       <td style="font-size:10.5px;color:var(--text-dim);max-width:260px;">${hist}${si.faltan.length?`<br><span style="color:var(--red)">sin recibo: ${si.faltan.map(nm).join(', ')}</span>`:''}</td></tr>`; }).join('');
   const tot = k => calcs.reduce((t,c)=>t+(c[k]||0),0);
+  // Lo que cuesta el SAC: el recibo de SAC aparte de cada persona (bruto, aportes, neto y contribuciones del empleador)
+  const partes = calcs.map(c=>{ const p = partirSac(c); return p.length > 1 ? p[1] : null; }).filter(Boolean);
+  const ts = k => partes.reduce((t,c)=>t+(Number(c[k])||0),0);
+  const sBruto = ts('sueldoBrutoTotal'), sDesc = ts('totalDescuentos'), sNeto = ts('sueldoNeto'), sContrib = ts('subtotalContribucionesEmpleador'), sCosto = ts('costoTotalEmpleador');
+  const avFuera = calcs.filter(c=>c.sacInfo && c.sacInfo.mesMejorRem && c.sacInfo.mesMejorRem !== key && c.sacInfo.mesMejorRem >= INICIO_SISTEMA && /fuera|gerente/i.test((c.categoria||c.emp.categoria||'')));
+  const resumen = `<div class="cards" style="grid-template-columns:repeat(4,1fr);margin-bottom:10px;">
+      <div class="card"><div class="lbl">SAC bruto</div><div class="val">$${fmt2(sBruto)}</div><div class="sub">rem. $${fmt2(tot('sacRem'))} · no rem. $${fmt2(tot('sacNoRem'))}</div></div>
+      <div class="card"><div class="lbl">A pagar (neto)</div><div class="val">$${fmt2(sNeto)}</div><div class="sub">aportes retenidos $${fmt2(sDesc)}</div></div>
+      <div class="card"><div class="lbl">Contribuciones</div><div class="val">$${fmt2(sContrib)}</div><div class="sub">van al F.931 de ${esc(labelPeriodo(key))}</div></div>
+      <div class="card"><div class="lbl">Costo total SAC</div><div class="val">$${fmt2(sCosto)}</div><div class="sub">bruto + contribuciones</div></div></div>
+    ${avFuera.length ? `<div class="foot-note" style="border-color:var(--orange);margin-bottom:8px;font-size:12px;">⚠ ${avFuera.map(c=>esc(c.emp.nombre)).join(', ')}: la mejor remuneración no es la de este mes. Revisá en “Meses del semestre” si el básico de este mes es el que corresponde.</div>` : ''}`;
   const ov = abrirDialogo('SAC · '+labelPeriodo(key),
-    `<p style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Mejor remuneración mensual del semestre × días trabajados / 360. Lo no remunerativo del acuerdo (suma, antigüedad y presentismo) se calcula igual. * = recibo real del estudio. Para corregir a una persona, cargá el importe a mano; vacío = calculado.</p>
+    resumen + `<p style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Mejor remuneración mensual del semestre × días trabajados / 360. Lo no remunerativo del acuerdo (suma, antigüedad y presentismo) se calcula igual. * = recibo real del estudio. Para corregir a una persona, cargá el importe a mano; vacío = calculado.</p>
      <div class="table-scroll" style="max-height:55vh"><table class="tbl-arch"><thead><tr><th>Persona</th><th class="num">Días</th><th class="num">Mejor rem.</th><th class="num">SAC rem.</th><th class="num">SAC no rem.</th><th>A mano rem.</th><th>A mano no rem.</th><th>Meses del semestre</th></tr></thead>
      <tbody>${filas}<tr style="font-weight:700;background:var(--panel2);"><td>TOTAL (${calcs.length})</td><td></td><td></td><td class="num">${fmt2(tot('sacRem'))}</td><td class="num">${fmt2(tot('sacNoRem'))}</td><td colspan="3"></td></tr></tbody></table></div>`,
     editable ? [{txt:'Cancelar'},{txt:'Guardar', primario:true, accion:()=>{
