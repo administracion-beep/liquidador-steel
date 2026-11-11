@@ -5483,7 +5483,11 @@ function sincronizarNoRemEscala(key){
   const temp = g.noRemunerativos.find(x=>x.tipo==='temporal');
   const resto = g.noRemunerativos.filter(x=>!(((x.tipo||'permanente')==='permanente' && !x.fallo) || x.tipo==='temporal'));
   const nuevos = [];
-  if(Number(e.sumaFija) > 0) nuevos.push({concepto:'Suma no remunerativa (acuerdos anteriores)', monto:Number(e.sumaFija), tipo:'permanente', alcance:(perm && perm.alcance) || 'todos'});
+  // A quién se paga la suma de acuerdos anteriores: lo mismo que en el último mes cerrado (en Steel, solo convenio); si no hay, solo convenio.
+  const ultCerrado = Object.keys(GLOBAL).filter(k=>k < key && periodoCerrado(k)).sort().pop();
+  const permCerr = ultCerrado ? (GLOBAL[ultCerrado].noRemunerativos||[]).find(x=>(x.tipo||'permanente')==='permanente' && !x.fallo) : null;
+  const alcPerm = (permCerr && permCerr.alcance) || (perm && perm.alcance) || 'convenio';
+  if(Number(e.sumaFija) > 0) nuevos.push({concepto:'Suma no remunerativa (acuerdos anteriores)', monto:Number(e.sumaFija), tipo:'permanente', alcance:alcPerm});
   if(Number(e.sumaUnica) > 0) nuevos.push({concepto:'Suma no remunerativa por única vez (acuerdo 10/2026)', monto:Number(e.sumaUnica), tipo:'temporal', alcance:(temp && temp.alcance) || 'todos'});
   g.noRemunerativos = nuevos.concat(resto);
   if(JSON.stringify(g.noRemunerativos) === antes) return false;
